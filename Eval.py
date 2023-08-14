@@ -8,6 +8,7 @@ from os.path import splitext
 from torchvision import transforms
 from torchvision.utils import save_image
 
+
 def calc_mean_std(feat, eps=1e-5):
     # eps is a small value added to the variance to avoid divide-by-zero.
     size = feat.size()
@@ -18,11 +19,13 @@ def calc_mean_std(feat, eps=1e-5):
     feat_mean = feat.view(N, C, -1).mean(dim=2).view(N, C, 1, 1)
     return feat_mean, feat_std
 
+
 def mean_variance_norm(feat):
     size = feat.size()
     mean, std = calc_mean_std(feat)
     normalized_feat = (feat - mean.expand(size)) / std.expand(size)
     return normalized_feat
+
 
 decoder = nn.Sequential(
     nn.ReflectionPad2d((1, 1, 1, 1)),
@@ -112,16 +115,17 @@ vgg = nn.Sequential(
     nn.ReLU()  # relu5-4
 )
 
+
 class SANet(nn.Module):
-    
+
     def __init__(self, in_planes):
         super(SANet, self).__init__()
         self.f = nn.Conv2d(in_planes, in_planes, (1, 1))
         self.g = nn.Conv2d(in_planes, in_planes, (1, 1))
         self.h = nn.Conv2d(in_planes, in_planes, (1, 1))
-        self.sm = nn.Softmax(dim = -1)
+        self.sm = nn.Softmax(dim=-1)
         self.out_conv = nn.Conv2d(in_planes, in_planes, (1, 1))
-        
+
     def forward(self, content, style):
         F = self.f(mean_variance_norm(content))
         G = self.g(mean_variance_norm(style))
@@ -141,16 +145,20 @@ class SANet(nn.Module):
         O += content
         return O
 
+
 class Transform(nn.Module):
     def __init__(self, in_planes):
         super(Transform, self).__init__()
-        self.sanet4_1 = SANet(in_planes = in_planes)
-        self.sanet5_1 = SANet(in_planes = in_planes)
+        self.sanet4_1 = SANet(in_planes=in_planes)
+        self.sanet5_1 = SANet(in_planes=in_planes)
         self.upsample5_1 = nn.Upsample(scale_factor=2, mode='nearest')
         self.merge_conv_pad = nn.ReflectionPad2d((1, 1, 1, 1))
         self.merge_conv = nn.Conv2d(in_planes, in_planes, (3, 3))
+
     def forward(self, content4_1, style4_1, content5_1, style5_1):
-        return self.merge_conv(self.merge_conv_pad(self.sanet4_1(content4_1, style4_1) + self.upsample5_1(self.sanet5_1(content5_1, style5_1))))
+        return self.merge_conv(self.merge_conv_pad(
+            self.sanet4_1(content4_1, style4_1) + self.upsample5_1(self.sanet5_1(content5_1, style5_1))))
+
 
 def test_transform():
     transform_list = []
@@ -158,24 +166,25 @@ def test_transform():
     transform = transforms.Compose(transform_list)
     return transform
 
+
 parser = argparse.ArgumentParser()
 
 # Basic options
-parser.add_argument('--content', type=str, default = 'input/chicago.jpg',
+parser.add_argument('--content', type=str, default='input/chicago.jpg',
                     help='File path to the content image')
-parser.add_argument('--style', type=str, default = 'style/style11.jpg',
+parser.add_argument('--style', type=str, default='style/style11.jpg',
                     help='File path to the style image, or multiple style \
                     images separated by commas if you want to do style \
                     interpolation or spatial control')
-parser.add_argument('--steps', type=str, default = 1)
-parser.add_argument('--vgg', type=str, default = 'vgg_normalised.pth')
-parser.add_argument('--decoder', type=str, default = 'decoder_iter_500000.pth')
-parser.add_argument('--transform', type=str, default = 'transformer_iter_500000.pth')
+parser.add_argument('--steps', type=str, default=1)
+parser.add_argument('--vgg', type=str, default='vgg_normalised.pth')
+parser.add_argument('--decoder', type=str, default='decoder_iter_500000.pth')
+parser.add_argument('--transform', type=str, default='transformer_iter_500000.pth')
 
 # Additional options
-parser.add_argument('--save_ext', default = '.jpg',
+parser.add_argument('--save_ext', default='.jpg',
                     help='The extension name of the output image')
-parser.add_argument('--output', type=str, default = 'output',
+parser.add_argument('--output', type=str, default='output',
                     help='Directory to save the output image(s)')
 
 # Advanced options
@@ -188,7 +197,7 @@ if not os.path.exists(args.output):
     os.mkdir(args.output)
 
 decoder = decoder
-transform = Transform(in_planes = 512)
+transform = Transform(in_planes=512)
 vgg = vgg
 
 decoder.eval()
@@ -218,32 +227,40 @@ decoder.to(device)
 content_tf = test_transform()
 style_tf = test_transform()
 
-content = content_tf(Image.open(args.content))
-style = style_tf(Image.open(args.style))
+content_dir = args.content
+style_dir = args.style
 
-style = style.to(device).unsqueeze(0)
-content = content.to(device).unsqueeze(0)
+for content_file in os.listdir(content_dir):
+    for style_file in os.listdir(style_dir):
 
-with torch.no_grad():
+        name_c = content_dir + content_file
+        name_s = style_dir + style_file
 
-    for x in range(args.steps):
+        content = content_tf(Image.open(name_c))
+        style = style_tf(Image.open(name_s))
 
-        print('iteration ' + str(x))
-        
-        Content4_1 = enc_4(enc_3(enc_2(enc_1(content))))
-        Content5_1 = enc_5(Content4_1)
-    
-        Style4_1 = enc_4(enc_3(enc_2(enc_1(style))))
-        Style5_1 = enc_5(Style4_1)
-    
-        content = decoder(transform(Content4_1, Style4_1, Content5_1, Style5_1))
+        style = style.to(device).unsqueeze(0)
+        content = content.to(device).unsqueeze(0)
 
-        content.clamp(0, 255)
+        with torch.no_grad():
 
-    content = content.cpu()
-    
-    output_name = '{:s}/{:s}_stylized_{:s}{:s}'.format(
-                args.output, splitext(basename(args.content))[0],
-                splitext(basename(args.style))[0], args.save_ext
+            for x in range(args.steps):
+                print('iteration ' + str(x))
+
+                Content4_1 = enc_4(enc_3(enc_2(enc_1(content))))
+                Content5_1 = enc_5(Content4_1)
+
+                Style4_1 = enc_4(enc_3(enc_2(enc_1(style))))
+                Style5_1 = enc_5(Style4_1)
+
+                content = decoder(transform(Content4_1, Style4_1, Content5_1, Style5_1))
+
+                content.clamp(0, 255)
+
+            content = content.cpu()
+
+            output_name = '{:s}/{:s}_stylized_{:s}{:s}'.format(
+                args.output, content_file,
+                style_file, args.save_ext
             )
-    save_image(content, output_name)
+            save_image(content, output_name)
